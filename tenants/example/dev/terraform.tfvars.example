@@ -1,9 +1,17 @@
 # Non-secret example values only.
 namespace            = "CHANGE_ME"
 pod_name             = "ga-smoke-pod"
-image                = "CHANGE_ME_REGISTRY/CHANGE_ME_IMAGE:CHANGE_ME_TAG"
 container_name       = "application"
 service_account_name = "default"
+
+# Registry path is defined independently from the workload image so the same
+# module can be used with Harbor, OpenShift internal registry or another OCI registry.
+container_registry = "registry.example.internal/customer-a"
+image_repository   = "global-automation/demo-app"
+image_tag          = "1.0.0"
+
+# Resulting image reference:
+# registry.example.internal/customer-a/global-automation/demo-app:1.0.0
 
 labels = {
   "app.kubernetes.io/managed-by" = "terraform"
