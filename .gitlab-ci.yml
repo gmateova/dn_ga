@@ -2,21 +2,43 @@ stages:
   - validate
   - security
   - test
+  - prepare
   - plan
   - apply
+  - verify
+
+workflow:
+  rules:
+    - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
+    - if: '$CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH'
+    - if: '$CI_PIPELINE_SOURCE == "web"'
 
 variables:
   TF_IN_AUTOMATION: "true"
   TF_INPUT: "false"
-  TF_ROOT: "tenants/example/dev"
-  TF_PLAN: "tfplan"
+  TF_PLUGIN_CACHE_DIR: "$CI_PROJECT_DIR/.terraform.d/plugin-cache"
+  # Explicit pipeline inputs. Replace example/dev from the Run pipeline UI.
+  TENANT: "example"
+  ENVIRONMENT: "dev"
+
+cache:
+  key: terraform-providers
+  paths:
+    - .terraform.d/plugin-cache/
 
 .terraform:
   image:
     name: hashicorp/terraform:1.9
     entrypoint: [""]
   before_script:
+    - mkdir -p "$TF_PLUGIN_CACHE_DIR"
     - terraform version
+
+.resolve-target:
+  before_script:
+    - chmod +x scripts/resolve-target.sh
+    - ./scripts/resolve-target.sh
+    - source target.env
 
 terraform-fmt:
   extends: .terraform
@@ -28,6 +50,9 @@ terraform-validate:
   extends: .terraform
   stage: validate
   script:
+    - chmod +x scripts/resolve-target.sh
+    - ./scripts/resolve-target.sh
+    - source target.env
     - terraform -chdir="$TF_ROOT" init -backend=false
     - terraform -chdir="$TF_ROOT" validate
 
@@ -56,28 +81,48 @@ tflint:
     - tflint --init
     - tflint --recursive
 
+target-check:
+  stage: prepare
+  image: alpine:3.22
+  script:
+    - chmod +x scripts/resolve-target.sh
+    - ./scripts/resolve-target.sh
+  artifacts:
+    reports:
+      dotenv: target.env
+
 terraform-smoke:
   extends: .terraform
   stage: test
   script:
+    - chmod +x scripts/resolve-target.sh
+    - ./scripts/resolve-target.sh
+    - source target.env
     - terraform -chdir="$TF_ROOT" init -backend=false
     - terraform -chdir="$TF_ROOT" validate
 
 terraform-plan:
   extends: .terraform
   stage: plan
+  needs:
+    - job: target-check
+      artifacts: true
+    - terraform-fmt
+    - terraform-validate
+    - tflint
+    - secret-scan
+    - checkov
+    - terraform-smoke
   script:
-    - terraform -chdir="$TF_ROOT" init
-    - terraform -chdir="$TF_ROOT" plan -out="$CI_PROJECT_DIR/$TF_PLAN"
-    - terraform -chdir="$TF_ROOT" show -json "$CI_PROJECT_DIR/$TF_PLAN" > "$CI_PROJECT_DIR/tfplan.json"
+    - chmod +x scripts/backend.sh
+    - ./scripts/backend.sh
+    - terraform -chdir="$TF_ROOT" plan -input=false -out="$CI_PROJECT_DIR/$TF_PLAN_NAME"
+    - terraform -chdir="$TF_ROOT" show -json "$CI_PROJECT_DIR/$TF_PLAN_NAME" > "$CI_PROJECT_DIR/tfplan.json"
   artifacts:
     paths:
-      - tfplan
+      - "*.tfplan"
       - tfplan.json
     expire_in: 1 day
-  rules:
-    - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
-    - if: '$CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH'
 
 policy-gate:
   stage: plan
@@ -89,24 +134,40 @@ policy-gate:
       artifacts: true
   script:
     - conftest test tfplan.json --policy policy
-  rules:
-    - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
-    - if: '$CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH'
 
 terraform-apply:
   extends: .terraform
   stage: apply
   needs:
+    - job: target-check
+      artifacts: true
     - job: terraform-plan
       artifacts: true
-    - job: policy-gate
+    - policy-gate
   script:
-    - terraform -chdir="$TF_ROOT" init
-    - terraform -chdir="$TF_ROOT" apply -auto-approve "$CI_PROJECT_DIR/$TF_PLAN"
+    - chmod +x scripts/backend.sh
+    - ./scripts/backend.sh
+    - terraform -chdir="$TF_ROOT" apply -input=false -auto-approve "$CI_PROJECT_DIR/$TF_PLAN_NAME"
   environment:
-    name: "$TF_ROOT"
-  resource_group: "$TF_ROOT"
+    name: "$TENANT/$ENVIRONMENT"
+  resource_group: "$TENANT-$ENVIRONMENT"
   when: manual
   allow_failure: false
+  rules:
+    - if: '$CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH && $ENVIRONMENT == "dev"'
+    - if: '$CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH && $ENVIRONMENT == "preope"'
+    - if: '$CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH && $ENVIRONMENT == "ope"'
+
+post-apply-smoke:
+  stage: verify
+  image: registry.redhat.io/openshift4/ose-cli:latest
+  needs:
+    - terraform-apply
+  script:
+    - test -n "$OPENSHIFT_API_URL"
+    - test -n "$OPENSHIFT_TOKEN"
+    - oc login "$OPENSHIFT_API_URL" --token="$OPENSHIFT_TOKEN"
+    - oc -n "$OPENSHIFT_NAMESPACE" get pod "$POD_NAME"
+    - oc -n "$OPENSHIFT_NAMESPACE" wait --for=condition=Ready "pod/$POD_NAME" --timeout=120s
   rules:
     - if: '$CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH'
