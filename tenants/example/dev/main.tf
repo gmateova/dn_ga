@@ -18,12 +18,16 @@ provider "kubernetes" {
   cluster_ca_certificate = var.openshift_ca_certificate
 }
 
+locals {
+  image = "${var.container_registry}/${var.image_repository}:${var.image_tag}"
+}
+
 module "pod" {
   source = "../../../modules/openshift-pod"
 
   name                 = var.pod_name
   namespace            = var.namespace
-  image                = var.image
+  image                = local.image
   container_name       = var.container_name
   service_account_name = var.service_account_name
   labels               = var.labels
