@@ -1,0 +1,112 @@
+stages:
+  - validate
+  - security
+  - test
+  - plan
+  - apply
+
+variables:
+  TF_IN_AUTOMATION: "true"
+  TF_INPUT: "false"
+  TF_ROOT: "tenants/example/dev"
+  TF_PLAN: "tfplan"
+
+.terraform:
+  image:
+    name: hashicorp/terraform:1.9
+    entrypoint: [""]
+  before_script:
+    - terraform version
+
+terraform-fmt:
+  extends: .terraform
+  stage: validate
+  script:
+    - terraform fmt -check -recursive
+
+terraform-validate:
+  extends: .terraform
+  stage: validate
+  script:
+    - terraform -chdir="$TF_ROOT" init -backend=false
+    - terraform -chdir="$TF_ROOT" validate
+
+secret-scan:
+  stage: security
+  image:
+    name: zricethezav/gitleaks:latest
+    entrypoint: [""]
+  script:
+    - gitleaks detect --source . --no-banner --redact
+
+checkov:
+  stage: security
+  image:
+    name: bridgecrew/checkov:latest
+    entrypoint: [""]
+  script:
+    - checkov -d . --framework terraform --quiet
+
+tflint:
+  stage: validate
+  image:
+    name: ghcr.io/terraform-linters/tflint:latest
+    entrypoint: [""]
+  script:
+    - tflint --init
+    - tflint --recursive
+
+terraform-smoke:
+  extends: .terraform
+  stage: test
+  script:
+    - terraform -chdir="$TF_ROOT" init -backend=false
+    - terraform -chdir="$TF_ROOT" validate
+
+terraform-plan:
+  extends: .terraform
+  stage: plan
+  script:
+    - terraform -chdir="$TF_ROOT" init
+    - terraform -chdir="$TF_ROOT" plan -out="$CI_PROJECT_DIR/$TF_PLAN"
+    - terraform -chdir="$TF_ROOT" show -json "$CI_PROJECT_DIR/$TF_PLAN" > "$CI_PROJECT_DIR/tfplan.json"
+  artifacts:
+    paths:
+      - tfplan
+      - tfplan.json
+    expire_in: 1 day
+  rules:
+    - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
+    - if: '$CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH'
+
+policy-gate:
+  stage: plan
+  image:
+    name: openpolicyagent/conftest:latest
+    entrypoint: [""]
+  needs:
+    - job: terraform-plan
+      artifacts: true
+  script:
+    - conftest test tfplan.json --policy policy
+  rules:
+    - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
+    - if: '$CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH'
+
+terraform-apply:
+  extends: .terraform
+  stage: apply
+  needs:
+    - job: terraform-plan
+      artifacts: true
+    - job: policy-gate
+  script:
+    - terraform -chdir="$TF_ROOT" init
+    - terraform -chdir="$TF_ROOT" apply -auto-approve "$CI_PROJECT_DIR/$TF_PLAN"
+  environment:
+    name: "$TF_ROOT"
+  resource_group: "$TF_ROOT"
+  when: manual
+  allow_failure: false
+  rules:
+    - if: '$CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH'
