@@ -37,16 +37,13 @@ The design follows these principles:
 ├── tenants/
 │   └── example/
 │       ├── dev/
-│       ├── preope/
-│       └── ope/
+│       ├── test/
+│       └── prod/
 ├── policy/
 │   └── terraform.rego
 ├── scripts/
 │   ├── check.sh
 │   └── smoke.sh
-├── tests/
-│   └── fixtures/
-│       └── valid.tfvars
 ├── .gitlab-ci.yml
 ├── .gitignore
 ├── .tflint.hcl
@@ -57,7 +54,7 @@ The design follows these principles:
 
 Reusable infrastructure belongs in `modules/`. Live desired state belongs under `tenants/<tenant>/<environment>/`.
 
-Each tenant/environment is a separate Terraform root module and **must use a separate backend/state**. Never share one state between customers or between DEV/preOPE/OPE.
+Each tenant/environment is a separate Terraform root module and **must use a separate backend/state**. Never share one state between customers or between DEV/TEST/PROD.
 
 Example:
 
@@ -65,12 +62,12 @@ Example:
 tenants/
 ├── customer-a/
 │   ├── dev/
-│   ├── preope/
-│   └── ope/
+│   ├── test/
+│   └── prod/
 └── customer-b/
     ├── dev/
-    ├── preope/
-    └── ope/
+    ├── test/
+    └── prod/
 ```
 
 The example roots deliberately contain placeholder OpenShift values. Copy the example tenant and provide real cluster/namespace/image/resource values later.
@@ -117,14 +114,23 @@ Run locally:
 
 The CI pipeline runs formatting, Terraform validation, TFLint, Checkov, secret scanning, OPA/Conftest policy checks and smoke tests before a plan can be produced.
 
-`apply` is intentionally manual and restricted to protected branches/environments. Production should additionally require the agreed DN approval controls.
+`apply` is intentionally manual and restricted to protected branches/environments. PROD additionally requires the agreed DN approval controls.
+
+## Environment model
+
+The Global Automation standard uses exactly three deployment environments:
+
+- `dev` - development and early integration
+- `test` - controlled validation before production
+- `prod` - production, protected and approval-gated
+
+The environment name is part of the Terraform state ownership boundary, for example `customer-a/dev/terraform.tfstate`, `customer-a/test/terraform.tfstate`, and `customer-a/prod/terraform.tfstate`.
 
 ## Next inputs
 
 The code is structured so these values can be supplied without redesigning the repository:
 
 - tenant names
-- environment names if different from DEV/preOPE/OPE
 - OpenShift API/provider authentication model
 - namespace/project names
 - container image/registry
