@@ -1,0 +1,31 @@
+.terraform:
+  image:
+    name: hashicorp/terraform:1.9
+    entrypoint: [""]
+  before_script:
+    - mkdir -p "$TF_PLUGIN_CACHE_DIR"
+    - terraform version
+
+.terraform-target:
+  extends: .terraform
+  before_script:
+    - mkdir -p "$TF_PLUGIN_CACHE_DIR"
+    - terraform version
+    - chmod +x scripts/resolve-target.sh
+    - ./scripts/resolve-target.sh
+    - source target.env
+
+terraform-fmt:
+  extends: .terraform
+  stage: validate
+  script:
+    - terraform fmt -check -recursive
+
+tflint:
+  stage: validate
+  image:
+    name: ghcr.io/terraform-linters/tflint:latest
+    entrypoint: [""]
+  script:
+    - tflint --init
+    - tflint --recursive
