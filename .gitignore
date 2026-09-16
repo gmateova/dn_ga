@@ -1,0 +1,27 @@
+# Terraform
+**/.terraform/*
+*.tfstate
+*.tfstate.*
+*.tfplan
+tfplan
+tfplan.json
+crash.log
+
+# Variable files may contain environment data/secrets.
+*.tfvars
+!*.tfvars.example
+*.auto.tfvars
+
+# Secrets
+.env
+.env.*
+*.pem
+*.key
+*.p12
+*.pfx
+secrets/
+
+# Editors / OS
+.vscode/
+.idea/
+.DS_Store
