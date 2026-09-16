@@ -17,9 +17,9 @@ if [[ ! "${ENVIRONMENT}" =~ ${valid_component} ]]; then
 fi
 
 case "${ENVIRONMENT}" in
-  dev|preope|ope) ;;
+  dev|test|prod) ;;
   *)
-    echo "Unsupported ENVIRONMENT '${ENVIRONMENT}'. Allowed: dev, preope, ope." >&2
+    echo "Unsupported ENVIRONMENT '${ENVIRONMENT}'. Allowed: dev, test, prod." >&2
     exit 1
     ;;
 esac
