@@ -1,0 +1,10 @@
+# Copy only confirmed values into /etc/gitlab/gitlab.rb.
+# Secrets must come from the enterprise secret store, not this repository.
+
+external_url 'https://gitlab.example.internal'
+
+# Add DN-specific values after confirmation:
+# nginx['ssl_certificate'] = '/etc/gitlab/ssl/gitlab.crt'
+# nginx['ssl_certificate_key'] = '/etc/gitlab/ssl/gitlab.key'
+# gitlab_rails['smtp_enable'] = true
+# gitlab_rails['ldap_enabled'] = true
