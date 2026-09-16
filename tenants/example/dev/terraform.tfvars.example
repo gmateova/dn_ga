@@ -1,0 +1,22 @@
+# Non-secret example values only.
+namespace            = "CHANGE_ME"
+pod_name             = "ga-smoke-pod"
+image                = "CHANGE_ME_REGISTRY/CHANGE_ME_IMAGE:CHANGE_ME_TAG"
+container_name       = "application"
+service_account_name = "default"
+
+labels = {
+  "app.kubernetes.io/managed-by" = "terraform"
+  "dn.global-automation/tenant"  = "example"
+  "dn.global-automation/env"     = "dev"
+}
+
+cpu_request    = "100m"
+memory_request = "128Mi"
+cpu_limit      = "500m"
+memory_limit   = "512Mi"
+
+# Supply these through CI environment variables instead:
+# TF_VAR_openshift_api_url
+# TF_VAR_openshift_token
+# TF_VAR_openshift_ca_certificate
