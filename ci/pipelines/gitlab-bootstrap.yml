@@ -1,0 +1,39 @@
+gitlab-bootstrap-shellcheck:
+  stage: validate
+  image: koalaman/shellcheck-alpine:stable
+  script:
+    - shellcheck bootstrap/gitlab-oel9/install.sh
+  rules:
+    - changes:
+        - bootstrap/gitlab-oel9/**/*
+        - ci/pipelines/gitlab-bootstrap.yml
+
+# Installation is intentionally manual and requires a runner with network access
+# to the target OEL9 host. GITLAB_BOOTSTRAP_HOST and SSH credentials are protected
+# CI/CD variables and must never be committed to Git.
+gitlab-bootstrap-install:
+  stage: apply
+  image: alpine:3.22
+  before_script:
+    - apk add --no-cache openssh-client
+    - test -n "$GITLAB_BOOTSTRAP_HOST"
+    - test -n "$GITLAB_EXTERNAL_URL"
+  script:
+    - scp bootstrap/gitlab-oel9/install.sh "$GITLAB_BOOTSTRAP_HOST:/tmp/dn-ga-install-gitlab.sh"
+    - ssh "$GITLAB_BOOTSTRAP_HOST" "sudo -E GITLAB_EXTERNAL_URL='$GITLAB_EXTERNAL_URL' bash /tmp/dn-ga-install-gitlab.sh"
+  when: manual
+  allow_failure: false
+  rules:
+    - if: '$CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH && $RUN_GITLAB_BOOTSTRAP == "true"'
+
+# The installer already performs a local health check. This verifies reachability
+# from the CI execution plane as a second smoke test.
+gitlab-bootstrap-smoke:
+  stage: verify
+  image: curlimages/curl:latest
+  needs:
+    - gitlab-bootstrap-install
+  script:
+    - curl --fail --silent --show-error --max-time 15 "$GITLAB_EXTERNAL_URL/-/health"
+  rules:
+    - if: '$CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH && $RUN_GITLAB_BOOTSTRAP == "true"'
