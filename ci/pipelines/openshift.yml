@@ -1,0 +1,94 @@
+openshift-target-check:
+  stage: prepare
+  image: alpine:3.22
+  script:
+    - chmod +x scripts/resolve-target.sh
+    - ./scripts/resolve-target.sh
+  artifacts:
+    reports:
+      dotenv: target.env
+
+openshift-validate:
+  extends: .terraform-target
+  stage: validate
+  script:
+    - terraform -chdir="$TF_ROOT" init -backend=false
+    - terraform -chdir="$TF_ROOT" validate
+
+openshift-smoke:
+  extends: .terraform-target
+  stage: test
+  script:
+    - terraform -chdir="$TF_ROOT" init -backend=false
+    - terraform -chdir="$TF_ROOT" validate
+
+openshift-plan:
+  extends: .terraform
+  stage: plan
+  needs:
+    - job: openshift-target-check
+      artifacts: true
+    - terraform-fmt
+    - tflint
+    - secret-scan
+    - checkov
+    - openshift-validate
+    - openshift-smoke
+  script:
+    - chmod +x scripts/backend.sh
+    - ./scripts/backend.sh
+    - terraform -chdir="$TF_ROOT" plan -input=false -out="$CI_PROJECT_DIR/$TF_PLAN_NAME"
+    - terraform -chdir="$TF_ROOT" show -json "$CI_PROJECT_DIR/$TF_PLAN_NAME" > "$CI_PROJECT_DIR/tfplan.json"
+  artifacts:
+    paths:
+      - "*.tfplan"
+      - tfplan.json
+    expire_in: 1 day
+
+openshift-policy-gate:
+  stage: plan
+  image:
+    name: openpolicyagent/conftest:latest
+    entrypoint: [""]
+  needs:
+    - job: openshift-plan
+      artifacts: true
+  script:
+    - conftest test tfplan.json --policy policy
+
+openshift-apply:
+  extends: .terraform
+  stage: apply
+  needs:
+    - job: openshift-target-check
+      artifacts: true
+    - job: openshift-plan
+      artifacts: true
+    - openshift-policy-gate
+  script:
+    - chmod +x scripts/backend.sh
+    - ./scripts/backend.sh
+    - terraform -chdir="$TF_ROOT" apply -input=false -auto-approve "$CI_PROJECT_DIR/$TF_PLAN_NAME"
+  environment:
+    name: "$TENANT/$ENVIRONMENT"
+  resource_group: "$TENANT-$ENVIRONMENT"
+  when: manual
+  allow_failure: false
+  rules:
+    - if: '$CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH && $ENVIRONMENT =~ /^(dev|test|prod)$/'
+
+openshift-post-apply-smoke:
+  stage: verify
+  image: registry.redhat.io/openshift4/ose-cli:latest
+  needs:
+    - openshift-apply
+  script:
+    - test -n "$OPENSHIFT_API_URL"
+    - test -n "$OPENSHIFT_TOKEN"
+    - test -n "$OPENSHIFT_NAMESPACE"
+    - test -n "$POD_NAME"
+    - oc login "$OPENSHIFT_API_URL" --token="$OPENSHIFT_TOKEN"
+    - oc -n "$OPENSHIFT_NAMESPACE" get pod "$POD_NAME"
+    - oc -n "$OPENSHIFT_NAMESPACE" wait --for=condition=Ready "pod/$POD_NAME" --timeout=120s
+  rules:
+    - if: '$CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH'
